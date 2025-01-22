@@ -1,0 +1,124 @@
+---
+title: "Inferless OpenAI Compatibility Mode Guide"
+---
+
+This guide explains how to create an OpenAI-compatible endpoint using Inferless. The compatibility mode allows you to seamlessly integrate existing OpenAI-based applications with custom language models deployed on Inferless, requiring minimal code changes.
+
+You can use the below repo for example:
+[https://github.com/inferless/inferless_template]( https://github.com/inferless/inferless_template )
+
+## Project Structure
+
+The template consists of two main files:
+
+```
+/
+├── app.py
+├── input_schema.py 
+```
+
+## Setting Up OpenAI Compatibility
+
+
+### 1. Configure Input Schema
+Define OPENAI_CLIENT_COMPATIBLITY in the **input\_schema.py** You must define the paramter with the name as **message** in the input. The message can be of type string where you can pass the stringified json data.
+
+input\_schema.py 
+
+```input_schema
+INPUT_SCHEMA = {
+    "message": {
+        'datatype': 'STRING',
+        'required': True,
+        'shape': [1],
+        'example': ["[{\"role\":\"developer\",\"content\":\"You are a helpful assistant.\"},{\"role\":\"user\",\"content\":\"Hello!\"}]"]
+    }
+}
+OPENAI_CLIENT_COMPATIBLITY = True
+```
+
+### 2. Implement Inference Logic
+
+In `app.py`, implement your model's inference logic:
+
+
+```python
+import json
+import numpy as np
+import torch
+from transformers import pipeline
+
+
+class InferlessPythonModel:
+
+    # Implement the Load function here for the model
+    def initialize(self):
+        self.generator = pipeline("text-generation", model="EleutherAI/gpt-neo-125M",device=0)
+
+    
+    # Function to perform inference 
+    def infer(self, inputs):
+        # inputs is a dictonary where the keys are input names and values are actual input data
+        # e.g. in the below code the input name is "prompt"
+        prompt = inputs["message"]
+        pipeline_output = self.generator(prompt, do_sample=True)
+        generated_txt = pipeline_output[0]["generated_text"]
+        return {"generated_text": json.dumps(generated_txt)}
+
+    # perform any cleanup activity here
+    def finalize(self,args):
+        self.pipe = None
+```
+
+## Making API Requests
+
+
+### Using Curl
+
+```bash
+curl --location '<model-infer-url>' \
+          --header 'Content-Type: application/json' \
+          --header 'Authorization: Bearer <your-api-key>' \
+          --data '{
+    "inputs": [
+        {
+            "name": "message",
+            "shape": [
+                1
+            ],
+            "data": [
+                "[{\"role\":\"developer\",\"content\":\"You are a helpful assistant.\"},{\"role\":\"user\",\"content\":\"Hello!\"}]"
+            ],
+            "datatype": "BYTES"
+        }
+    ]
+}'
+```
+
+### Using Python Client
+
+Install the inferless client.
+
+```bash
+pip install --upgrade inferless
+```
+
+Create an Inferless Object and initialize it with the URL and the API Key.
+
+```python
+from inferless.api import InferlessOpenAIClient
+
+
+client = InferlessOpenAIClient(
+    base_url='<your-model-url>',
+    api_key='<api-key>'
+)
+```
+
+Use the `call_infer` function to make the inference request.
+
+```python
+response = client.call_infer(
+    [{"role":"developer","content":"You are a helpful assistant."},{"role":"user","content":"Hello!"}]
+)
+```
