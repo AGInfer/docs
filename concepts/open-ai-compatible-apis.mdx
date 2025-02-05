@@ -4,6 +4,9 @@ title: "Inferless OpenAI Compatibility Mode Guide"
 
 This guide explains how to create an OpenAI-compatible endpoint using Inferless. The compatibility mode allows you to seamlessly integrate existing OpenAI-based applications with custom language models deployed on Inferless, requiring minimal code changes.
 
+For developers already familiar with OpenAI's API structure, Inferless provides a drop-in replacement that maintains compatibility with standard OpenAI API calls. 
+
+
 You can use the below repo for example:
 [https://github.com/inferless/inferless_template]( https://github.com/inferless/inferless_template )
 
@@ -25,13 +28,37 @@ Define OPENAI_CLIENT_COMPATIBLITY in the **input\_schema.py** You must define th
 
 input\_schema.py 
 
-```input_schema
+```python
 INPUT_SCHEMA = {
     "message": {
         'datatype': 'STRING',
         'required': True,
         'shape': [1],
         'example': ["[{\"role\":\"developer\",\"content\":\"You are a helpful assistant.\"},{\"role\":\"user\",\"content\":\"Hello!\"}]"]
+    },
+    "temperature": {
+        'datatype': 'FP32',
+        'required': False,
+        'shape': [1],
+        'example': [0.7]
+    },
+    "max_completion_tokens": {
+        'datatype': 'INT32',
+        'required': False,
+        'shape': [1],
+        'example': [250]
+    },
+    "presence_penalty": {
+        'datatype': 'FP32',
+        'required': False,
+        'shape': [1],
+        'example': [0.5]
+    },
+    "seed": {
+        'datatype': 'INT32',
+        'required': False,
+        'shape': [1],
+        'example': [1234]
     }
 }
 OPENAI_CLIENT_COMPATIBLITY = True
@@ -44,57 +71,51 @@ In `app.py`, implement your model's inference logic:
 
 ```python
 import json
+import os
 import numpy as np
-import torch
-from transformers import pipeline
+from openai import OpenAI
+import logging
 
 
 class InferlessPythonModel:
 
     # Implement the Load function here for the model
     def initialize(self):
-        self.generator = pipeline("text-generation", model="EleutherAI/gpt-neo-125M",device=0)
+        pass
 
-    
     # Function to perform inference 
     def infer(self, inputs):
-        # inputs is a dictonary where the keys are input names and values are actual input data
-        # e.g. in the below code the input name is "prompt"
-        prompt = inputs["message"]
-        pipeline_output = self.generator(prompt, do_sample=True)
-        generated_txt = pipeline_output[0]["generated_text"]
-        return {"generated_text": json.dumps(generated_txt)}
+        OPEN_AI_API_KEY = os.environ.get("OPEN_AI_API_KEY")
+        OPEN_AI_ORG_ID = os.environ.get("OPEN_AI_ORG_ID")
+        openai_client = OpenAI(
+            api_key=OPEN_AI_API_KEY,
+            organization=OPEN_AI_ORG_ID
+        )
 
-    # perform any cleanup activity here
-    def finalize(self,args):
+        # Ensure all numerical inputs are standard Python types
+        seed = int(inputs.get("seed", 1234))  # Convert to Python int
+        temperature = float(inputs.get("temperature", 0.7))  # Convert to Python float
+        presence_penalty = float(inputs.get("presence_penalty", 0.5))  # Convert to Python float
+        max_completion_tokens = int(inputs.get("max_completion_tokens", 256))  # Convert to Python int
+
+        completion = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=temperature,
+            messages=inputs["message"],
+            presence_penalty=presence_penalty,
+            max_completion_tokens=max_completion_tokens,
+            seed=seed,
+        )
+        
+        response_dict = completion.model_dump()
+        return json.dumps(response_dict)
+
+    # Perform any cleanup activity here
+    def finalize(self, args):
         self.pipe = None
 ```
 
 ## Making API Requests
-
-
-### Using Curl
-
-```bash
-curl --location '<model-infer-url>' \
-          --header 'Content-Type: application/json' \
-          --header 'Authorization: Bearer <your-api-key>' \
-          --data '{
-    "inputs": [
-        {
-            "name": "message",
-            "shape": [
-                1
-            ],
-            "data": [
-                "[{\"role\":\"developer\",\"content\":\"You are a helpful assistant.\"},{\"role\":\"user\",\"content\":\"Hello!\"}]"
-            ],
-            "datatype": "BYTES"
-        }
-    ]
-}'
-```
-
 ### Using Python Client
 
 Install the inferless client.
@@ -121,4 +142,49 @@ Use the `call_infer` function to make the inference request.
 response = client.call_infer(
     [{"role":"developer","content":"You are a helpful assistant."},{"role":"user","content":"Hello!"}]
 )
+
+response_data = response.get("outputs")[0].get("data")[0]
+```
+
+The `response_data` object will be of the format
+
+```json
+{
+  "id": "chatcmpl-AxWWqlY69ZoXm2B5WMJ7QpFK4QRtG",
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "content": "Hello! How can I assist you today?",
+        "refusal": null,
+        "role": "assistant",
+        "audio": null,
+        "function_call": null,
+        "tool_calls": null
+      }
+    }
+  ],
+  "created": 1738749756,
+  "model": "gpt-4o-mini-2024-07-18",
+  "object": "chat.completion",
+  "service_tier": "default",
+  "system_fingerprint": "fp_72ed7ab54c",
+  "usage": {
+    "completion_tokens": 10,
+    "prompt_tokens": 19,
+    "total_tokens": 29,
+    "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cached_tokens": 0
+    }
+  }
+}
 ```
