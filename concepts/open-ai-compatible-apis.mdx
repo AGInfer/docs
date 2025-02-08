@@ -40,25 +40,25 @@ INPUT_SCHEMA = {
         'datatype': 'FP32',
         'required': False,
         'shape': [1],
-        'example': [0.7]
+        'example': [0.5]
     },
-    "max_completion_tokens": {
+    "max_length": {
         'datatype': 'INT32',
         'required': False,
         'shape': [1],
-        'example': [250]
+        'example': [256]
     },
-    "presence_penalty": {
+    "repetition_penalty": {
         'datatype': 'FP32',
         'required': False,
         'shape': [1],
-        'example': [0.5]
+        'example': [1.2]
     },
-    "seed": {
-        'datatype': 'INT32',
+    "top_p": {
+        'datatype': 'FP32',
         'required': False,
         'shape': [1],
-        'example': [1234]
+        'example': [0.7]
     }
 }
 OPENAI_CLIENT_COMPATIBLITY = True
@@ -73,42 +73,37 @@ In `app.py`, implement your model's inference logic:
 import json
 import os
 import numpy as np
-from openai import OpenAI
 import logging
+from transformers import pipeline
 
 
 class InferlessPythonModel:
 
     # Implement the Load function here for the model
     def initialize(self):
-        pass
+        self.pipe = pipeline("text-generation", model="HuggingFaceTB/SmolLM2-360M-Instruct")
 
     # Function to perform inference 
     def infer(self, inputs):
-        OPEN_AI_API_KEY = os.environ.get("OPEN_AI_API_KEY")
-        OPEN_AI_ORG_ID = os.environ.get("OPEN_AI_ORG_ID")
-        openai_client = OpenAI(
-            api_key=OPEN_AI_API_KEY,
-            organization=OPEN_AI_ORG_ID
-        )
-
         # Ensure all numerical inputs are standard Python types
-        seed = int(inputs.get("seed", 1234))  # Convert to Python int
         temperature = float(inputs.get("temperature", 0.7))  # Convert to Python float
-        presence_penalty = float(inputs.get("presence_penalty", 0.5))  # Convert to Python float
-        max_completion_tokens = int(inputs.get("max_completion_tokens", 256))  # Convert to Python int
+        repetition_penalty = float(inputs.get("repetition_penalty", 0.5))  # Convert to Python float
+        max_length = int(inputs.get("max_length", 256))  # Convert to Python int
+        top_p = float(inputs.get("top_p", 0.9))
 
-        completion = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+        output = self.pipe(
+            inputs["message"], 
+            max_length=max_length,
             temperature=temperature,
-            messages=inputs["message"],
-            presence_penalty=presence_penalty,
-            max_completion_tokens=max_completion_tokens,
-            seed=seed,
+            repetition_penalty=repetition_penalty,
+            top_p=top_p,
+            do_sample=True
         )
-        
-        response_dict = completion.model_dump()
-        return json.dumps(response_dict)
+
+        assistant_response = [
+            msg for msg in output[0]['generated_text'] if msg.get("role") == "assistant"
+        ]
+        return {"choices": json.dumps([{"message": assistant_response}])}
 
     # Perform any cleanup activity here
     def finalize(self, args):
@@ -140,51 +135,36 @@ Use the `call_infer` function to make the inference request.
 
 ```python
 response = client.call_infer(
-    [{"role":"developer","content":"You are a helpful assistant."},{"role":"user","content":"Hello!"}]
+    message=[
+        {"role": "developer", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "How to make an omlette?"},
+    ],
+    temperature=0.5,
+    max_length=256,
+    repetition_penalty=1.2,
+    top_p=0.7
 )
 
-response_data = response.get("outputs")[0].get("data")[0]
+result = json.loads(response.get("outputs")[0].get("data")[0])[0].get("choices")
 ```
 
 The `response_data` object will be of the format
 
 ```json
 {
-  "id": "chatcmpl-AxWWqlY69ZoXm2B5WMJ7QpFK4QRtG",
-  "choices": [
+  "model_name": "inferless-client_3e017bcbb731441c8630b7294e2ecc8d",
+  "model_version": "1",
+  "outputs": [
     {
-      "finish_reason": "stop",
-      "index": 0,
-      "logprobs": null,
-      "message": {
-        "content": "Hello! How can I assist you today?",
-        "refusal": null,
-        "role": "assistant",
-        "audio": null,
-        "function_call": null,
-        "tool_calls": null
-      }
+      "name": "choices",
+      "datatype": "BYTES",
+      "shape": [
+        1
+      ],
+      "data": [
+        "[{\"choices\": [{\"role\": \"assistant\", \"content\": \"1. Gather your ingredients: 3 eggs, milk or cream (optional), salt and pepper for seasoning, cheese if you want it on top of the omelet, and any vegetables like bell peppers or mushrooms that will go in with the egg white.\\n\\n2. Crack three large eggs into a bowl. Add two tablespoons of milk or cream, one teaspoon of salt, and one tablespoon of freshly ground black pepper. If desired, whisk these together before adding them to the eggs. This mixture is called \\\"whipping.\\\" \\n\\n3. Heat a non-stick pan over medium heat until very hot but not smoking. Pour about half the whipping mix onto the bottom of the pan. Place another third of the beaten eggs on top of this layer of whipped mix. Repeat the process, alternating between layers of cooked eggs and more whipped mix, until all the eggs have been used up. \\n4. Once everything has had time to set, add your chosen filling - usually some shredded cheddar cheese, sliced ham,\"}]}]"
+      ]
     }
-  ],
-  "created": 1738749756,
-  "model": "gpt-4o-mini-2024-07-18",
-  "object": "chat.completion",
-  "service_tier": "default",
-  "system_fingerprint": "fp_72ed7ab54c",
-  "usage": {
-    "completion_tokens": 10,
-    "prompt_tokens": 19,
-    "total_tokens": 29,
-    "completion_tokens_details": {
-      "accepted_prediction_tokens": 0,
-      "audio_tokens": 0,
-      "reasoning_tokens": 0,
-      "rejected_prediction_tokens": 0
-    },
-    "prompt_tokens_details": {
-      "audio_tokens": 0,
-      "cached_tokens": 0
-    }
-  }
+  ]
 }
 ```
