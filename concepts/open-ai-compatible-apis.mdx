@@ -1,0 +1,170 @@
+---
+title: "Inferless OpenAI Compatibility Mode Guide"
+---
+
+This guide explains how to create an OpenAI-compatible endpoint using Inferless. The compatibility mode allows you to seamlessly integrate existing OpenAI-based applications with custom language models deployed on Inferless, requiring minimal code changes.
+
+For developers already familiar with OpenAI's API structure, Inferless provides a drop-in replacement that maintains compatibility with standard OpenAI API calls. 
+
+
+You can use the below repo for example:
+[https://github.com/inferless/inferless_template]( https://github.com/inferless/inferless_template )
+
+## Project Structure
+
+The template consists of two main files:
+
+```
+/
+├── app.py
+├── input_schema.py 
+```
+
+## Setting Up OpenAI Compatibility
+
+
+### 1. Configure Input Schema
+Define OPENAI_CLIENT_COMPATIBLITY in the **input\_schema.py** You must define the paramter with the name as **message** in the input. The message can be of type string where you can pass the stringified json data.
+
+input\_schema.py 
+
+```python
+INPUT_SCHEMA = {
+    "message": {
+        'datatype': 'STRING',
+        'required': True,
+        'shape': [1],
+        'example': ["[{\"role\":\"developer\",\"content\":\"You are a helpful assistant.\"},{\"role\":\"user\",\"content\":\"Hello!\"}]"]
+    },
+    "temperature": {
+        'datatype': 'FP32',
+        'required': False,
+        'shape': [1],
+        'example': [0.5]
+    },
+    "max_length": {
+        'datatype': 'INT32',
+        'required': False,
+        'shape': [1],
+        'example': [256]
+    },
+    "repetition_penalty": {
+        'datatype': 'FP32',
+        'required': False,
+        'shape': [1],
+        'example': [1.2]
+    },
+    "top_p": {
+        'datatype': 'FP32',
+        'required': False,
+        'shape': [1],
+        'example': [0.7]
+    }
+}
+OPENAI_CLIENT_COMPATIBLITY = True
+```
+
+### 2. Implement Inference Logic
+
+In `app.py`, implement your model's inference logic:
+
+
+```python
+import json
+import os
+import numpy as np
+import logging
+from transformers import pipeline
+
+
+class InferlessPythonModel:
+
+    # Implement the Load function here for the model
+    def initialize(self):
+        self.pipe = pipeline("text-generation", model="HuggingFaceTB/SmolLM2-360M-Instruct")
+
+    # Function to perform inference 
+    def infer(self, inputs):
+        # Ensure all numerical inputs are standard Python types
+        temperature = float(inputs.get("temperature", 0.7))  # Convert to Python float
+        repetition_penalty = float(inputs.get("repetition_penalty", 0.5))  # Convert to Python float
+        max_length = int(inputs.get("max_length", 256))  # Convert to Python int
+        top_p = float(inputs.get("top_p", 0.9))
+
+        output = self.pipe(
+            inputs["message"], 
+            max_length=max_length,
+            temperature=temperature,
+            repetition_penalty=repetition_penalty,
+            top_p=top_p,
+            do_sample=True
+        )
+
+        assistant_response = [
+            msg for msg in output[0]['generated_text'] if msg.get("role") == "assistant"
+        ]
+        return {"choices": json.dumps([{"message": assistant_response}])}
+
+    # Perform any cleanup activity here
+    def finalize(self, args):
+        self.pipe = None
+```
+
+## Making API Requests
+### Using Python Client
+
+Install the inferless client.
+
+```bash
+pip install --upgrade inferless
+```
+
+Create an Inferless Object and initialize it with the URL and the API Key.
+
+```python
+from inferless.api import InferlessOpenAIClient
+
+
+client = InferlessOpenAIClient(
+    base_url='<your-model-url>',
+    api_key='<api-key>'
+)
+```
+
+Use the `call_infer` function to make the inference request.
+
+```python
+response = client.call_infer(
+    message=[
+        {"role": "developer", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "How to make an omlette?"},
+    ],
+    temperature=0.5,
+    max_length=256,
+    repetition_penalty=1.2,
+    top_p=0.7
+)
+
+result = json.loads(response.get("outputs")[0].get("data")[0])[0].get("choices")
+```
+
+The `response_data` object will be of the format
+
+```json
+{
+  "model_name": "inferless-client_3e017bcbb731441c8630b7294e2ecc8d",
+  "model_version": "1",
+  "outputs": [
+    {
+      "name": "choices",
+      "datatype": "BYTES",
+      "shape": [
+        1
+      ],
+      "data": [
+        "[{\"choices\": [{\"role\": \"assistant\", \"content\": \"1. Gather your ingredients: 3 eggs, milk or cream (optional), salt and pepper for seasoning, cheese if you want it on top of the omelet, and any vegetables like bell peppers or mushrooms that will go in with the egg white.\\n\\n2. Crack three large eggs into a bowl. Add two tablespoons of milk or cream, one teaspoon of salt, and one tablespoon of freshly ground black pepper. If desired, whisk these together before adding them to the eggs. This mixture is called \\\"whipping.\\\" \\n\\n3. Heat a non-stick pan over medium heat until very hot but not smoking. Pour about half the whipping mix onto the bottom of the pan. Place another third of the beaten eggs on top of this layer of whipped mix. Repeat the process, alternating between layers of cooked eggs and more whipped mix, until all the eggs have been used up. \\n4. Once everything has had time to set, add your chosen filling - usually some shredded cheddar cheese, sliced ham,\"}]}]"
+      ]
+    }
+  ]
+}
+```
